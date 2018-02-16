@@ -129,7 +129,7 @@ class Abathor():
 
         cash = round(balance.loc[cash_id, 'balance'],2)
         if cash <= 0.01:
-            return 
+            return {'status':'No money to buy with'}
         coin = cash/price
         json = {
         'price': '{:.2f}'.format(price),
@@ -151,7 +151,7 @@ class Abathor():
 
         coin = round(balance.loc[coin_id, 'balance'], 8)
         if coin < self.min_size:
-            return
+            return {'status':'Nothing to sell'}
         json = {
                 'price': '{:.2f}'.format(price),
                 'size': '{:.8f}'.format(coin),
@@ -190,20 +190,33 @@ class Abathor():
                 results.append(self.request('/orders/{}'.format(iden), method = 'DELETE'))
             return results
     
-    
+
 
 def main_loop():
+    global current_minute
     print('Minute Passed')
     candles, signal = aba.get_current_signal()
     maximum = candles.index.max()
-    price = candles[['low', 'high', 'open', 'close']].ewm(halflife = 2).mean().tail(1).mean().mean()
-    s = signal.loc[signal.index.max()]
-    if s:
-        aba.place_buy(price)
-        
-    if not s:
-        aba.place_sell(price)
+    book = aba.request('/products/{}/book'.format(aba.product_id))
+    asks = float(book['asks'][0][0])
+    bids = float(book['bids'][0][0])
     
+    #price = candles[[low', 'high', 'open', 'close']].ewm(halflife = 2).mean().tail(1).mean().mean()
+    s = signal.loc[signal.index.max()]
+    
+    if s:
+        price = min(bids +.01,asks - .01)
+        status = aba.place_buy(price)
+        if status['status'] == 'rejected':
+            print("Order Rejected")
+            current_minute = 'rejected'
+    if not s:
+        price = max(bids +.01,asks - .01)
+        status = aba.place_sell(price)
+        if status['status'] == 'rejected':
+            print("Order Rejected")
+
+            current_minute = 'rejected'
     
     final = pd.DataFrame(index = candles.index)
     
@@ -217,10 +230,11 @@ def main_loop():
     
     print(signal.loc[maximum])
     
-
+    
+current_minute = datetime.now()
 aba = Abathor('LTC-USD')
 
-current_minute = datetime.now()
+
 while True:
     now = datetime.now().minute
     if now != current_minute:
