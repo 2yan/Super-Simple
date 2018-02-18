@@ -7,6 +7,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 import doctor
 import math
+import matplotlib.patches as patches
+import matplotlib as mpl
 
 def round(number, ndigits):
     x = number * (10** ndigits )
@@ -106,9 +108,9 @@ class Abathor():
         return final
 
     def get_current_signal(self):
-        b_candles, big = aba.get_trend(int(60 *60))
-        s_candles, small = aba.get_trend(60*5)
-        final = aba.get_signal(big, small)
+        b_candles, big = self.get_trend(int(60 *60))
+        s_candles, small = self.get_trend(60*5)
+        final = self.get_signal(big, small)
         signal = final['signal']
         return  s_candles, signal
     
@@ -191,8 +193,46 @@ class Abathor():
             return results
     
 
+def plot_candles(candles, signal):
+    fig, ax = plt.subplots()
+    fig.set_size_inches(9, 7)
+    def add_rectangle(i, open_, close,low, high, ax, sig):
+        x = i - .5
+        y = min(open_, close)
+        height = abs(open_ - close)
+        if sig:
+            color = 'green'
+            hatch = 'x'
+        if not sig:
+            color = 'red'
+            hatch = ''
+        ax.add_patch(patches.Rectangle((x, y), .9, height,
+                                       fill = open_ <= close, facecolor = color,
+                                       edgecolor = color, hatch = hatch ))
+        top = max(open_,close)
+        bottom = min(open_,close)
 
-def main_loop():
+        if low < bottom:
+            ax.add_line(mpl.lines.Line2D([i,i], [low, bottom], color = color) )
+
+            
+        if high > top:
+            ax.add_line(mpl.lines.Line2D([i,i], [high, top], color = color) )
+
+        
+    for i, index in enumerate(candles.index):
+        sig = signal.loc[index]
+        row = candles.loc[index]
+        add_rectangle(i, row['open'], row['close'],row['low'], row['high'],  ax, sig)
+    ax.set_xlim(0, len(candles))
+    ax.set_ylim(candles['close'].min() *.998, candles['close'].max() * 1.002)
+    plt.show()
+    
+    
+#c, s = aba.get_current_signal()
+
+
+def main_loop(aba):
     global current_minute
     print('Minute Passed')
     candles, signal = aba.get_current_signal()
@@ -230,16 +270,18 @@ def main_loop():
     print(signal.loc[maximum])
     
     
-current_minute = datetime.now()
-aba = Abathor('LTC-USD')
+def begin():
+    
+    current_minute = datetime.now()
+    aba = Abathor('LTC-USD')
+    
+    
+    while True:
+        now = datetime.now().minute
+        if now != current_minute:
+            main_loop(aba)
+            current_minute = now
 
-
-while True:
-    now = datetime.now().minute
-    if now != current_minute:
-        main_loop()
-        current_minute = now
-'''
 class Tester():
     cash = None
     coin = None
@@ -282,7 +324,7 @@ class Tester():
         final.loc[~self.signal, 'sell'] = candles.loc[~self.signal, 'close']
         plt.scatter(range(len(final)), final['buy'],color = 'green')
         plt.scatter(range(len(final)), final['sell'],color = 'red')
-'''
+
 
         
 
