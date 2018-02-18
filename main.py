@@ -219,13 +219,12 @@ def main_loop():
             current_minute = 'rejected'
     
     final = pd.DataFrame(index = candles.index)
-    
     fig, ax = plt.subplots()
     final = pd.DataFrame(index = candles.index)
     final.loc[signal, 'buy'] = candles.loc[signal, 'close']
     final.loc[~signal, 'sell'] = candles.loc[~signal, 'close']
-    plt.scatter(range(len(final)), final['buy'],color = 'green')
-    plt.scatter(range(len(final)), final['sell'],color = 'red')
+    plt.scatter(range(len(final)), final['buy'],color = 'green', marker = '.')
+    plt.scatter(range(len(final)), final['sell'],color = 'red', marker = '.')
     plt.show()
     
     print(signal.loc[maximum])
