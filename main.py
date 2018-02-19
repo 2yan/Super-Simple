@@ -188,8 +188,16 @@ class Abathor():
             return results
     
 
-
-
+    def get_book(self, level = 1):
+        x = self.request('/products/{}/book'.format(self.product_id), params= {'level':level})
+        asks = pd.DataFrame(x['asks'], columns = ['price', 'size', 'count'])
+        bids = pd.DataFrame(x['bids'], columns = ['price', 'size', 'count'])
+        for data in asks, bids:
+            for column in data.columns:
+                data[column] = pd.to_numeric(data[column])
+        bids.set_index('price', inplace = True)
+        asks.set_index('price', inplace = True)
+        return bids, asks
 
 def plot_candles(candles, signal):
     fig, ax = plt.subplots()
