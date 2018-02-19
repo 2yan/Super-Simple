@@ -15,12 +15,13 @@ def round(number, ndigits):
     x = float(math.floor(x))
     x = x/(10**ndigits)
     return x
+
+
 class Abathor():
     url = 'https://api.gdax.com'
     product_id = None
     logfile = None
     last_message = None
-
     
     def __init__(self, product_id):
         self.product_id = product_id
@@ -86,34 +87,14 @@ class Abathor():
         candles.sort_values('time', inplace= True)
         candles.set_index('time', inplace= True)
         return candles
-
-    def get_indicators(self, candles):
-        indicators = pd.DataFrame(index = candles.index)
-        indicators['macd'] = candles['close'].ewm(span = 12).mean() - candles['close'].ewm(span = 23).mean()
-        indicators['macd_signal'] = indicators['macd'].ewm(span = 9).mean()
-        indicators['close'] = candles['close']
-        return indicators
+    
+    def get_macd(self, candles, long = 23, short = 12, signal = 9 ):
+        macd = pd.DataFrame(index = candles.index)
+        macd['macd'] = candles['close'].ewm(span = short).mean() - candles['close'].ewm(span = long).mean()
+        macd['macd_signal'] = macd['macd'].ewm(span = signal).mean()
+        macd['close'] = candles['close']
+        return macd
         
-    def get_trend(self, time = 60 * 15):
-        candles = self.get_candles(granularity = time)
-        indy = self.get_indicators(candles)
-        return candles, indy
-    
-    def get_signal(self, big, small):
-        final = pd.DataFrame(index = small.index)
-        final['big_signal'] = big['macd'] >= big['macd_signal']
-        final['big_signal'] = final['big_signal'].ffill().bfill()
-        final['small_signal'] = small['macd'] >= small['macd_signal']
-        final['signal'] = final['small_signal'] & final['big_signal']
-        return final
-
-    def get_current_signal(self):
-        b_candles, big = self.get_trend(int(60 *60))
-        s_candles, small = self.get_trend(60*5)
-        final = self.get_signal(big, small)
-        signal = final['signal']
-        return  s_candles, signal
-    
     def get_products(self):
         data = pd.DataFrame(self.request('/products'))
         data.set_index('id', inplace = True)
@@ -122,10 +103,10 @@ class Abathor():
     def get_open_orders(self):
         return pd.DataFrame(self.request('/orders'))
     
-    def place_buy(self, price):
+    def place_buy(self, price, _type = 'limit'):
         price = round(price, 2)
         cash_id = self.product_id.split('-')[1]
-        coin_id = self.product_id.split('-')[0]        
+        #coin_id = self.product_id.split('-')[0]        
         
         balance = self.clear_holds()
 
@@ -138,16 +119,16 @@ class Abathor():
         'size': '{:.8f}'.format(coin),
         'side': 'buy',
         'product_id':self.product_id,
-        'type':'limit',
+        'type':_type,
         'post_only': True
         }
         self.log('Placing buy Order for amount {:.8f} at price {:.2f} '.format(coin, price))
         return self.request( '/orders' ,json = json ,method = 'POST')
 
     
-    def place_sell(self, price):
+    def place_sell(self, price, _type = 'limit'):
         price = round(price, 2)
-        cash_id = self.product_id.split('-')[1]
+        #cash_id = self.product_id.split('-')[1]
         coin_id = self.product_id.split('-')[0]
         balance = self.clear_holds()
 
@@ -159,7 +140,7 @@ class Abathor():
                 'size': '{:.8f}'.format(coin),
                 'side': 'sell',
                 'product_id':self.product_id,
-                'type':'limit',
+                'type':_type,
                 'post_only': True
                 }
         self.log('Placing sell Order for amount {:.8f} at price {:.2f} '.format(coin, price))
@@ -227,60 +208,74 @@ def plot_candles(candles, signal):
     ax.set_xlim(0, len(candles))
     ax.set_ylim(candles['close'].min() *.998, candles['close'].max() * 1.002)
     plt.show()
-    
-    
-#c, s = aba.get_current_signal()
 
 
-def main_loop(aba):
+def main_loop(strategy):
     global current_minute
-    print('Minute Passed')
-    candles, signal = aba.get_current_signal()
+    aba = strategy.aba
+    candles, signal = strategy.get_signal()
     maximum = candles.index.max()
     book = aba.request('/products/{}/book'.format(aba.product_id))
-    asks = float(book['asks'][0][0])
-    bids = float(book['bids'][0][0])
     
-    #price = candles[[low', 'high', 'open', 'close']].ewm(halflife = 2).mean().tail(1).mean().mean()
-    s = signal.loc[signal.index.max()]
-    
+    s = signal.loc[maximum]
     if s:
-        price = min(bids +.01,asks - .01)
-        status = aba.place_buy(price)
+        price = strategy.get_price(book, kind = 'buy')
+        status = aba.place_buy(price, strategy.get_order_type(kind = 'buy'))
         if status['status'] == 'rejected':
             print("Order Rejected")
             current_minute = 'rejected'
+            
     if not s:
-        price = max(bids +.01,asks - .01)
-        status = aba.place_sell(price)
+        price = strategy.get_price(book, kind = 'sell')
+        status = aba.place_sell(price, strategy.get_order_type(kind = 'sell'))
         if status['status'] == 'rejected':
             print("Order Rejected")
-
             current_minute = 'rejected'
+
+    plot_candles(candles.iloc[300:], signal.iloc[300:])
+            
+
+class MACD_strategy():
+    aba = None
+    def __init__(self, product_id):
+        self.aba = Abathor(product_id)
     
-    final = pd.DataFrame(index = candles.index)
-    fig, ax = plt.subplots()
-    final = pd.DataFrame(index = candles.index)
-    final.loc[signal, 'buy'] = candles.loc[signal, 'close']
-    final.loc[~signal, 'sell'] = candles.loc[~signal, 'close']
-    plt.scatter(range(len(final)), final['buy'],color = 'green', marker = '.')
-    plt.scatter(range(len(final)), final['sell'],color = 'red', marker = '.')
-    plt.show()
+    def get_signal(self):
+        short_candles = self.aba.get_candles(granularity=60 * 5)
+        macd = self.aba.get_macd(short_candles)
+        return short_candles, macd['macd_signal'] < macd['macd']
+    def get_order_type(self, kind):
+        return 'market'
     
-    print(signal.loc[maximum])
-    
-    
+    def get_price(self, book = None, kind = 'buy'):
+        if type(book) == type(None):
+            book = self.aba.request('/products/{}/book'.format(self.aba.product_id))
+            
+        asks = float(book['asks'][0][0])
+        bids = float(book['bids'][0][0])
+        
+        if kind == 'sell':
+            return max(bids +.01,asks - .01)
+        if kind == 'buy':
+            return min(bids +.01,asks - .01)
+
 def begin():
-    
+    strategy = MACD_strategy('LTC-USD')
     current_minute = datetime.now()
-    aba = Abathor('LTC-USD')
+
     
     
     while True:
         now = datetime.now().minute
         if now != current_minute:
-            main_loop(aba)
+            main_loop(strategy)
             current_minute = now
+
+
+
+
+
+
 
 class Tester():
     cash = None
@@ -328,10 +323,5 @@ class Tester():
 
         
 
-    
 
-
-#c, s = aba.get_current_signal()
-#tester = Tester(c,s)
-#tester.do_test()
         
