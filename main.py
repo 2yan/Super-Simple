@@ -95,6 +95,20 @@ class Abathor():
         macd['close'] = candles['close']
         return macd
         
+    def get_rsi(self, prices, time_period = 14):
+        delta = prices.diff()
+        dUp, dDown = delta.copy(), delta.copy()
+        dUp[dUp < 0] = 0
+        dDown[dDown > 0] = 0
+        
+        RolUp = dUp.rolling(window = time_period, center = False).mean()
+        RolDown = dDown.rolling(window = time_period, center = False).mean().abs()
+        
+        RS = RolUp / RolDown
+        rsi= 100.0 - (100.0 / (1.0 + RS))
+        return rsi
+
+
     def get_products(self):
         data = pd.DataFrame(self.request('/products'))
         data.set_index('id', inplace = True)
@@ -174,6 +188,9 @@ class Abathor():
             return results
     
 
+
+
+
 def plot_candles(candles, signal):
     fig, ax = plt.subplots()
     fig.set_size_inches(9, 7)
@@ -181,11 +198,15 @@ def plot_candles(candles, signal):
         x = i - .5
         y = min(open_, close)
         height = abs(open_ - close)
-        if sig:
+        if sig == 'buy':
             color = 'green'
             hatch = 'x'
-        if not sig:
+        if sig == 'sell':
             color = 'red'
+            hatch = ''
+            
+        if sig == 'wait':
+            color = 'orange'
             hatch = ''
         ax.add_patch(patches.Rectangle((x, y), .9, height,
                                        fill = open_ <= close, facecolor = color,
@@ -218,34 +239,114 @@ def main_loop(strategy):
     book = aba.request('/products/{}/book'.format(aba.product_id))
     
     s = signal.loc[maximum]
-    if s:
+    if s == 'buy':
         price = strategy.get_price(book, kind = 'buy')
-        status = aba.place_buy(price, strategy.get_order_type(kind = 'buy'))
-        if status['status'] == 'rejected':
-            print("Order Rejected")
-            current_minute = 'rejected'
+        print('sell {}'.format(price))
+        #status = aba.place_buy(price, strategy.get_order_type(kind = 'buy'))
+        #if status['status'] == 'rejected':
+        #    print("Order Rejected")
+        #    current_minute = 'rejected'
             
-    if not s:
+    if s == 'sell':
         price = strategy.get_price(book, kind = 'sell')
-        status = aba.place_sell(price, strategy.get_order_type(kind = 'sell'))
-        if status['status'] == 'rejected':
-            print("Order Rejected")
-            current_minute = 'rejected'
+        print('sell {}'.format(price))
+        #status = aba.place_sell(price, strategy.get_order_type(kind = 'sell'))
+        #if status['status'] == 'rejected':
+        #    print("Order Rejected")
+        #    current_minute = 'rejected'
 
-    plot_candles(candles.iloc[300:], signal.iloc[300:])
+    strategy.plot()
+
+class RSI_and_MACD_strategy():
+    aba = None
+    signals = {}
+    
+    def __init__(self, product_id):
+        self.aba = Abathor(product_id)        
+        
+    def get_signal(self):
+        candles = self.aba.get_candles(granularity=60)
+        long_candles = self.aba.get_candles(granularity = 15* 60)
+        
+        rsi = self.aba.get_rsi(candles['close'])
+
+        macd = self.aba.get_macd(long_candles,  23, 13, 9 )
+        temp = pd.DataFrame(index = candles.index)
+        temp['macd'] = macd['macd_signal'] < macd['macd']
+        temp = temp.ffill()
+        temp = temp.bfill()
+        macd_mask = temp['macd']
+        
+        
+        final = pd.Series(index = rsi.index)
+        final.loc[rsi.isnull()] = 'wait'
+        final.loc[rsi <= 30] = 'buy'
+        final.loc[rsi >= 70] = 'sell'
+        final.loc[final.isnull()] = 'wait'
+        final.loc[~macd_mask] = 'sell'
+        
+        self.signals['rsi'] = rsi
+        self.signals['macd'] = macd
+        self.signals['color'] = final
+        self.signals['candles'] = candles
+        
+        return candles, final
+
+    def get_order_type(self, kind):
+        if kind == 'buy':
+            return 'limit'
+        
+        if kind == 'sell':
+            return 'limit'
             
+    def get_price(self, book = None, kind = 'buy'):
+        if type(book) == type(None):
+            book = self.aba.request('/products/{}/book'.format(self.aba.product_id))
+            
+        asks = float(book['asks'][0][0])
+        bids = float(book['bids'][0][0])
+        
+        if kind == 'sell':
+            return max(bids +.01,asks - .01)
+        if kind == 'buy':
+            return min(bids +.01,asks - .01)
+    
+    def plot(self):
+
+        rsi = self.signals['rsi']
+        macd = self.signals['macd']
+        macd = macd[macd.index >= rsi.index.min()]
+        fig, ax = plt.subplots()
+        fig.set_size_inches(9, 7)
+        rsi.plot(ax = ax)
+        
+        ax2 = ax.twinx()
+        macd[['macd', 'macd_signal']].plot(ax = ax2)
+        plt.show()
+        plot_candles(self.signals['candles'], self.signals['color'])
+        
+        
+        
 
 class MACD_strategy():
     aba = None
+    signals = {}
     def __init__(self, product_id):
         self.aba = Abathor(product_id)
     
     def get_signal(self):
         short_candles = self.aba.get_candles(granularity=60 * 5)
         macd = self.aba.get_macd(short_candles)
+        self.signals['macd'] = macd
         return short_candles, macd['macd_signal'] < macd['macd']
+    
     def get_order_type(self, kind):
-        return 'market'
+        if kind == 'buy':
+            return 'market'
+        
+        if kind == 'sell':
+            return 'limit'
+            
     
     def get_price(self, book = None, kind = 'buy'):
         if type(book) == type(None):
@@ -258,12 +359,22 @@ class MACD_strategy():
             return max(bids +.01,asks - .01)
         if kind == 'buy':
             return min(bids +.01,asks - .01)
+        
+
+    def plot(self):
+
+        macd = self.signals['macd']
+        fig, ax = plt.subplots()
+        
+        macd[['macd', 'macd_signal']].plot(ax = ax)
+        ax2 = ax.twinx()
+        macd['close'].plot(ax2)
+
 
 def begin():
-    strategy = MACD_strategy('LTC-USD')
+    strategy = RSI_and_MACD_strategy('LTC-BTC')
     current_minute = datetime.now()
 
-    
     
     while True:
         now = datetime.now().minute
@@ -273,7 +384,14 @@ def begin():
 
 
 
-
+def chart_rsi(aba):
+    c = aba.get_candles()
+    rsi = aba.get_rsi(c['close'], 32)
+    fig, ax = plt.subplots()
+    c['close'].plot(ax = ax)
+    ax2 = ax.twinx()
+    rsi.plot(ax = ax2, color = 'green')
+    plt.show()
 
 
 

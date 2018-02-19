@@ -1,0 +1,1 @@
+2018-02-19T10:12:38.591658 ---- staus_code: 400reason: Bad Requesttext: {"message":"Unsupported granularity"}
