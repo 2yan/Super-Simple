@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import time
 import requests
@@ -29,6 +29,8 @@ class Abathor():
         self.logfile = os.getcwd() + '\\logs\\ {} '.format(datetime.today().strftime('%b %d %Y')) + product_id + '.txt'
         products = self.get_products()
         self.min_size = float(products.loc[product_id, 'base_min_size'])
+        self.time_difference = pd.to_datetime(self.request('/time')['iso']) - datetime.now()
+        
     def log(self, message):
         print(message)
         os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
