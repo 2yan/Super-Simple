@@ -94,10 +94,10 @@ class Abathor():
         macd = pd.DataFrame(index = candles.index)
         macd['macd'] = candles['close'].ewm(span = short).mean() - candles['close'].ewm(span = long).mean()
         macd['macd_signal'] = macd['macd'].ewm(span = signal).mean()
-        macd['close'] = candles['close']
         return macd
         
-    def get_rsi(self, prices, time_period = 14):
+    def get_rsi(self, cans, time_period = 14):
+        prices = cans['close']
         delta = prices.diff()
         dUp, dDown = delta.copy(), delta.copy()
         dUp[dUp < 0] = 0
@@ -110,7 +110,27 @@ class Abathor():
         rsi= 100.0 - (100.0 / (1.0 + RS))
         return rsi
 
+    def get_bollinger(self, cans, length=30, numsd=2):
+        def bbands(price, length, numsd):
+            """ returns average, upper band, and lower band"""
+            ave = price.rolling(window=length, center=False).mean()
+            sd = price.rolling(window=length,center=False).std()
+            upband = ave + (sd*numsd)
+            dnband = ave - (sd*numsd)
+            return np.round(ave,3), np.round(upband,3), np.round(dnband,3)
+        x = cans.copy()
+        x['avg'], x['upper'], x['lower'] = bbands(x['close'], length, numsd)
+        return x[['avg','upper','lower']]
+        
+    def split_volume(self, cans):
+        x = cans.copy()
+        x['vol_up'] = x.loc[x['close'] >= x['open'],'volume']
+        x['vol_down'] = x.loc[x['close'] < x['open'],'volume']
+        x['vol_up'] = x['vol_up'].fillna(0)
+        x['vol_down'] = x['vol_down'].fillna(0)
+        return x[['vol_down','vol_up']]
 
+        
     def get_products(self):
         data = pd.DataFrame(self.request('/products'))
         data.set_index('id', inplace = True)
@@ -239,217 +259,3 @@ def plot_candles(candles, signal):
     ax.set_xlim(0, len(candles))
     ax.set_ylim(candles['close'].min() *.998, candles['close'].max() * 1.002)
     plt.show()
-
-
-def main_loop(strategy):
-    global current_minute
-    aba = strategy.aba
-    candles, signal = strategy.get_signal()
-    maximum = candles.index.max()
-    book = aba.request('/products/{}/book'.format(aba.product_id))
-    
-    s = signal.loc[maximum]
-    if s == 'buy':
-        price = strategy.get_price(book, kind = 'buy')
-        print('sell {}'.format(price))
-        #status = aba.place_buy(price, strategy.get_order_type(kind = 'buy'))
-        #if status['status'] == 'rejected':
-        #    print("Order Rejected")
-        #    current_minute = 'rejected'
-            
-    if s == 'sell':
-        price = strategy.get_price(book, kind = 'sell')
-        print('sell {}'.format(price))
-        #status = aba.place_sell(price, strategy.get_order_type(kind = 'sell'))
-        #if status['status'] == 'rejected':
-        #    print("Order Rejected")
-        #    current_minute = 'rejected'
-
-    strategy.plot()
-
-class RSI_and_MACD_strategy():
-    aba = None
-    signals = {}
-    
-    def __init__(self, product_id):
-        self.aba = Abathor(product_id)        
-        
-    def get_signal(self):
-        candles = self.aba.get_candles(granularity=60)
-        long_candles = self.aba.get_candles(granularity = 15* 60)
-        
-        rsi = self.aba.get_rsi(candles['close'])
-
-        macd = self.aba.get_macd(long_candles,  23, 13, 9 )
-        temp = pd.DataFrame(index = candles.index)
-        temp['macd'] = macd['macd_signal'] < macd['macd']
-        temp = temp.ffill()
-        temp = temp.bfill()
-        macd_mask = temp['macd']
-        
-        
-        final = pd.Series(index = rsi.index)
-        final.loc[rsi.isnull()] = 'wait'
-        final.loc[rsi <= 30] = 'buy'
-        final.loc[rsi >= 70] = 'sell'
-        final.loc[final.isnull()] = 'wait'
-        final.loc[~macd_mask] = 'sell'
-        
-        self.signals['rsi'] = rsi
-        self.signals['macd'] = macd
-        self.signals['color'] = final
-        self.signals['candles'] = candles
-        
-        return candles, final
-
-    def get_order_type(self, kind):
-        if kind == 'buy':
-            return 'limit'
-        
-        if kind == 'sell':
-            return 'limit'
-            
-    def get_price(self, book = None, kind = 'buy'):
-        if type(book) == type(None):
-            book = self.aba.request('/products/{}/book'.format(self.aba.product_id))
-            
-        asks = float(book['asks'][0][0])
-        bids = float(book['bids'][0][0])
-        
-        if kind == 'sell':
-            return max(bids +.01,asks - .01)
-        if kind == 'buy':
-            return min(bids +.01,asks - .01)
-    
-    def plot(self):
-
-        rsi = self.signals['rsi']
-        macd = self.signals['macd']
-        macd = macd[macd.index >= rsi.index.min()]
-        fig, ax = plt.subplots()
-        fig.set_size_inches(9, 7)
-        rsi.plot(ax = ax)
-        
-        ax2 = ax.twinx()
-        macd[['macd', 'macd_signal']].plot(ax = ax2)
-        plt.show()
-        plot_candles(self.signals['candles'], self.signals['color'])
-        
-        
-        
-
-class MACD_strategy():
-    aba = None
-    signals = {}
-    def __init__(self, product_id):
-        self.aba = Abathor(product_id)
-    
-    def get_signal(self):
-        short_candles = self.aba.get_candles(granularity=60 * 5)
-        macd = self.aba.get_macd(short_candles)
-        self.signals['macd'] = macd
-        return short_candles, macd['macd_signal'] < macd['macd']
-    
-    def get_order_type(self, kind):
-        if kind == 'buy':
-            return 'market'
-        
-        if kind == 'sell':
-            return 'limit'
-            
-    
-    def get_price(self, book = None, kind = 'buy'):
-        if type(book) == type(None):
-            book = self.aba.request('/products/{}/book'.format(self.aba.product_id))
-            
-        asks = float(book['asks'][0][0])
-        bids = float(book['bids'][0][0])
-        
-        if kind == 'sell':
-            return max(bids +.01,asks - .01)
-        if kind == 'buy':
-            return min(bids +.01,asks - .01)
-        
-
-    def plot(self):
-
-        macd = self.signals['macd']
-        fig, ax = plt.subplots()
-        
-        macd[['macd', 'macd_signal']].plot(ax = ax)
-        ax2 = ax.twinx()
-        macd['close'].plot(ax2)
-
-
-def begin():
-    strategy = RSI_and_MACD_strategy('LTC-BTC')
-    current_minute = datetime.now()
-
-    
-    while True:
-        now = datetime.now().minute
-        if now != current_minute:
-            main_loop(strategy)
-            current_minute = now
-
-
-
-def chart_rsi(aba):
-    c = aba.get_candles()
-    rsi = aba.get_rsi(c['close'], 32)
-    fig, ax = plt.subplots()
-    c['close'].plot(ax = ax)
-    ax2 = ax.twinx()
-    rsi.plot(ax = ax2, color = 'green')
-    plt.show()
-
-
-
-class Tester():
-    cash = None
-    coin = None
-    def __init__(self, candles, signal, cash = 100, coin = 0):
-        self.cash = cash
-        self.coin = coin
-        self.candles = candles
-        self.signal = signal
-    
-    def buy(self, price):
-        self.coin = self.coin + (self.cash/price)
-        self.cash = 0
-        
-    def sell(self, price):        
-        self.cash = self.cash + (price * self.coin)
-        self.coin = 0
-        
-    
-    def do_test(self):
-        candles = self.candles
-        for index in candles.index:
-            price = candles.loc[index, 'close']
-            sign = self.signal.loc[index]
-            if sign and self.coin == 0:
-                self.buy(price)
-            if (not sign) and self.cash == 0:
-               self.sell(price)
-        self.sell(price)
-        print('Gains From Trading {}'.format(self.cash - 100))
-        
-        self.cash = 100
-        self.buy(candles.iloc[0]['close'])
-        self.sell(candles.iloc[len(candles)-1]['close'])
-        
-        print('Gains From Buy and Hold {}'.format(self.cash - 100))
-        fig, ax = plt.subplots()
-        fig.set_size_inches(8, 6)
-        final = pd.DataFrame(index = candles.index)
-        final.loc[self.signal, 'buy'] = candles.loc[self.signal, 'close']
-        final.loc[~self.signal, 'sell'] = candles.loc[~self.signal, 'close']
-        plt.scatter(range(len(final)), final['buy'],color = 'green')
-        plt.scatter(range(len(final)), final['sell'],color = 'red')
-
-
-        
-
-
-        
