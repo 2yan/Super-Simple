@@ -39,19 +39,24 @@ class Abathor():
         return
     
     def request(self, path, params=None, json = None, method = 'GET'):
+        error_codes = [429, 504]
         #Requests passthrough, tries to avoid the too many requests code by adding pauses
         self.last_message
         now = datetime.now()
+        sleep = 2
         if (now - self.last_message).total_seconds() <= 1:
             time.sleep(1)
         try:
             done = False
             while not done:
                 r = requests.request(method,self.url + path, params=params, json = json , auth = doctor.get_auth(), timeout=30)
-                if r.status_code == 429:
-                    time.sleep(2)
+                if r.status_code in error_codes:
+                    time.sleep(sleep)
+                    sleep = sleep**2
+                    self.log(str(r.text))
                     pass
-                if r.status_code != 429:
+                
+                if r.status_code not in error_codes:
                     done = True
         except ConnectionError as e:
             message = datetime.now().isoformat() + ' -----\n'
