@@ -1,1 +1,0 @@
-2018-03-09T08:06:23.722424 ---- staus_code: 400reason: Bad Requesttext: {"message":"granularity too small for the requested time range"}
