@@ -1,0 +1,7 @@
+Bollinger Band
+Minute Candles
+lag-600
+deviation-3.1
+
+Buy Above high, Sell Below low
+Not target profit or stoploss
