@@ -2,17 +2,20 @@ import os
 import glob
 import pickle
 from rack import Equipment
-import pandas as pd
 
-logfile = 'journal.txt'
+import pandas as pd
+import sys
+
+logfile = 'scientist_journal.txt'
 
 def log(message):
-    print(message)
-    os.makedirs(os.path.dirname(logfile), exist_ok=True)
-    with open(logfile, "a") as f:
+    from datetime import datetime
+    with open(logfile, 'a') as f:
+        f.write('\n')
+        f.write(datetime.now().isoformat())
+        f.write('    :')
         f.write(message)
-    return
-
+    return 
 
 def get_files_by_size():
     unordered = glob.glob('*.sample')
@@ -23,11 +26,24 @@ def get_files_by_size():
 
 class Scientist():
     current_work = None
-    
-    def __init__(self):
+    name = None
+    def __init__(self, name):
+        self.name = name
         return
     
-    
+    def __rename_file(self, start, end):
+        os.rename(start, end)
+        while os.path.exists(start):
+            continue
+        done = False
+        while not done:
+            try:
+                with open(end, 'rb') as f:
+                    end = pickle.load(f)
+                done = True
+            except PermissionError:
+                pass
+        return end
     
     def reserve_work(self):
         done = False
@@ -37,11 +53,15 @@ class Scientist():
                 if len(dishes) == 0:
                     raise Exception("Ain't got no work to do")
                 sample_dish = dishes[0]
-                dish = sample_dish.split('.')[0] + '.processing'
-                os.rename(sample_dish,dish )
-                done = True
-            except FileNotFoundError:
+                dish = sample_dish.split('.')[0] +'x{}x.processing'.format(self.name)
+                self.__rename_file(sample_dish,dish )
+                
+                if os.path.exists(dish):
+                    done = True
+                
+            except (FileNotFoundError, PermissionError) as e:
                 pass
+            
         return dish
     
     def get_sample(self):
@@ -55,10 +75,11 @@ class Scientist():
         
     def do_research(self, sample):
         equipment = Equipment(**sample['kwargs'])
-        result = equipment.test_signal(sample['prices'], sample['signal'])
+        equipment.test_signal(sample['prices'], sample['signal'])
         os.chdir('Publications')
-        with open(self.current_work+'.result', 'wb') as f:
-            pickle.dump(result, f)
+        name = self.current_work.replace('x{}x'.format(self.name), '')
+        with open(name +'.result', 'wb') as f:
+            pickle.dump(equipment, f)
         os.chdir('..')
     
     def clean_dishes(self):
@@ -67,7 +88,8 @@ class Scientist():
         os.chdir('..')
     
 if __name__ == '__main__':
-    john = Scientist()
+    name = sys.argv[1]
+    john = Scientist(name)
     sample = john.get_sample()
     john.do_research(sample)
     john.clean_dishes()
